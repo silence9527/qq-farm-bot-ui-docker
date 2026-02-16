@@ -256,10 +256,17 @@ body.light-theme .progress { background: rgba(0,0,0,0.08); }
   min-width: 112px;
   transition: width 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
+#logs-keyword-filter {
+  width: 180px;
+  min-width: 180px;
+}
 .log-filter-input:focus {
   width: 140px;
   color: var(--text);
   border-color: var(--primary);
+}
+#logs-keyword-filter:focus {
+  width: 220px;
 }
 .log-filter-select:focus {
   color: var(--text);
@@ -514,6 +521,9 @@ body.light-theme .land-cell.land-level-4 { background: #d4af37; border-color: #b
     flex: 1 1 120px;
     width: auto;
     min-width: 0;
+  }
+  #logs-keyword-filter {
+    flex-basis: 180px;
   }
   .log-filter-input:focus { width: auto; }
 

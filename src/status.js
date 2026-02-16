@@ -159,9 +159,9 @@ function setStatusPlatform(platform) {
 function updateStatusFromLogin(basic) {
     updateStatus({
         name: basic.name || statusData.name,
-        level: basic.level || statusData.level,
-        gold: basic.gold || statusData.gold,
-        exp: basic.exp || statusData.exp,
+        level: (basic.level ?? statusData.level),
+        gold: (basic.gold ?? statusData.gold),
+        exp: (basic.exp ?? statusData.exp),
     });
 }
 

@@ -29,6 +29,12 @@ let lastState = {
     exp: -1,
 };
 
+// 会话初始总量（登录成功时记录）
+let initialState = {
+    gold: null,
+    exp: null,
+};
+
 // 本次会话累计收益
 const session = {
     goldGained: 0,
@@ -66,11 +72,12 @@ function recordFriendCheck(status) {}
  * 初始化状态 (登录时调用)
  */
 function initStats(gold, exp) {
-    lastState.gold = gold;
-    lastState.exp = exp;
-    // 重置收益（可选，如果希望重启脚本后清零）
-    // session.goldGained = 0;
-    // session.expGained = 0;
+    const g = Number.isFinite(Number(gold)) ? Number(gold) : 0;
+    const e = Number.isFinite(Number(exp)) ? Number(exp) : 0;
+    lastState.gold = g;
+    lastState.exp = e;
+    initialState.gold = g;
+    initialState.exp = e;
 }
 
 /**
@@ -85,12 +92,12 @@ function updateStats(currentGold, currentExp) {
     // 计算金币增量
     if (currentGold > lastState.gold) {
         const delta = currentGold - lastState.gold;
-        session.goldGained += delta;
         session.lastGoldGain = delta;
         // console.log(`[Stats] Gold +${delta}`);
     } else if (currentGold < lastState.gold) {
         // 消费了金币，不计入收益，但要更新 lastState
         // console.log(`[Stats] Gold -${lastState.gold - currentGold}`);
+        session.lastGoldGain = 0;
     }
     lastState.gold = currentGold;
 
@@ -103,11 +110,12 @@ function updateStats(currentGold, currentExp) {
         if (delta === session.lastExpGain && (now - (session.lastExpTime || 0) < 1000)) {
             console.log(`[系统] 忽略重复经验增量 +${delta}`);
         } else {
-            session.expGained += delta;
             session.lastExpGain = delta;
             session.lastExpTime = now;
             console.log(`[系统] 经验 +${delta} (总计: ${currentExp})`);
         }
+    } else {
+        session.lastExpGain = 0;
     }
     lastState.exp = currentExp;
 }
@@ -121,16 +129,69 @@ function setInitialValues(gold, exp) {
     initStats(gold, exp);
 }
 
+function addSessionGold(delta) {
+    const n = Number(delta);
+    if (!Number.isFinite(n)) return;
+    const d = Math.floor(n);
+    if (d <= 0) return;
+    session.goldGained += d;
+    session.lastGoldGain = d;
+}
+
+function addSessionExp(delta) {
+    const n = Number(delta);
+    if (!Number.isFinite(n)) return;
+    const d = Math.floor(n);
+    if (d <= 0) return;
+    session.expGained += d;
+    session.lastExpGain = d;
+    session.lastExpTime = Date.now();
+}
+
+function resetSessionGains() {
+    session.goldGained = 0;
+    session.expGained = 0;
+    session.lastGoldGain = 0;
+    session.lastExpGain = 0;
+    session.lastExpTime = 0;
+}
+
+function recomputeSessionTotals(currentGold, currentExp) {
+    if (initialState.gold === null || initialState.exp === null) {
+        initialState.gold = currentGold;
+        initialState.exp = currentExp;
+    }
+    session.goldGained = currentGold - initialState.gold;
+    session.expGained = currentExp - initialState.exp;
+}
+
 function getStats(statusData, userState, connected, limits) {
+    const statusObj = (statusData && typeof statusData === 'object') ? statusData : {};
+    const userObj = (userState && typeof userState === 'object') ? userState : {};
+
+    // 优先使用 network 层 userState（通常是最新实时值），statusData 仅作为兜底
+    const rawGold = (userObj.gold !== null && userObj.gold !== undefined) ? userObj.gold : statusObj.gold;
+    const rawExp = (userObj.exp !== null && userObj.exp !== undefined) ? userObj.exp : statusObj.exp;
+    const currentGold = Number.isFinite(Number(rawGold)) ? Number(rawGold) : 0;
+    const currentExp = Number.isFinite(Number(rawExp)) ? Number(rawExp) : 0;
+
+    // 仅在连接就绪后统计，避免登录前 0 -> 登录后真实值被误计为收益
+    if (connected) {
+        // 兜底统计：即使状态钩子漏掉，也会按当前总值差量累计收益
+        updateStats(currentGold, currentExp);
+        // 会话总增量 = 当前总量 - 初始总量（不依赖具体操作）
+        recomputeSessionTotals(currentGold, currentExp);
+    }
+
     const operationsSnapshot = { ...operations };
     return {
         connection: { connected },
         status: {
-            name: userState.name,
-            level: statusData.level || userState.level,
-            gold: statusData.gold !== null ? statusData.gold : userState.gold,
-            exp: statusData.exp !== null ? statusData.exp : userState.exp,
-            platform: statusData.platform,
+            name: userObj.name,
+            level: statusObj.level || userObj.level || 0,
+            gold: currentGold,
+            exp: currentExp,
+            platform: statusObj.platform || userObj.platform || 'qq',
         },
         uptime: process.uptime(),
         operations: operationsSnapshot,
@@ -145,8 +206,7 @@ function getStats(statusData, userState, connected, limits) {
 function resetStats(currentGold, currentExp) {
     for (const k in operations) operations[k] = 0;
     initStats(currentGold, currentExp);
-    session.goldGained = 0;
-    session.expGained = 0;
+    resetSessionGains();
 }
 
 module.exports = {
@@ -159,6 +219,9 @@ module.exports = {
     updateStats,
     setInitialValues, // 兼容旧接口
     recordGoldExp,    // 兼容旧接口
+    addSessionGold,
+    addSessionExp,
+    resetSessionGains,
     getStats,
     resetStats,
     getOperations,

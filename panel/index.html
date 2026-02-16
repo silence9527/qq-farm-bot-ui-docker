@@ -103,13 +103,29 @@
                   <select id="logs-account-filter" class="form-control log-filter-select"><option value="all">全部账号</option></select>
                   <select id="logs-module-filter" class="form-control log-filter-select">
                     <option value="">模块</option>
-                    <option value="farm">farm</option>
-                    <option value="friend">friend</option>
-                    <option value="scheduler">scheduler</option>
+                    <option value="farm">农场</option>
+                    <option value="friend">好友</option>
+                    <option value="warehouse">仓库</option>
+                    <option value="task">任务</option>
                   </select>
-                  <input id="logs-event-filter" class="form-control log-filter-input" type="text" placeholder="event">
+                  <select id="logs-event-filter" class="form-control log-filter-select">
+                    <option value="">事件</option>
+                    <option value="farm_cycle">农场巡查</option>
+                    <option value="lands_notify">土地推送</option>
+                    <option value="remove_plant">铲除枯死作物</option>
+                    <option value="seed_pick">选种</option>
+                    <option value="seed_buy">购买种子</option>
+                    <option value="plant_seed">种植种子</option>
+                    <option value="fertilize">施加化肥</option>
+                    <option value="friend_cycle">好友巡查</option>
+                    <option value="visit_friend">访问好友</option>
+                    <option value="quiet_hours">静默时段</option>
+                    <option value="sell_success">出售成功</option>
+                    <option value="upgrade_land">土地升级</option>
+                    <option value="unlock_land">土地解锁</option>
+                  </select>
                   <select id="logs-warn-filter" class="form-control log-filter-select"><option value="">级别</option><option value="0">普通</option><option value="1">警告</option></select>
-                  <input id="logs-keyword-filter" class="form-control log-filter-input" type="text" placeholder="关键词">
+                  <input id="logs-keyword-filter" class="form-control log-filter-input" type="text" placeholder="关键词（空格分词）">
                 </div>
               </div>
               <div class="logs-container" id="logs-list"></div>
@@ -255,6 +271,6 @@
     </div>
   </div>
 
-<script src="app.js?v=2026021558"></script>
+<script src="app.js?v=2026021559"></script>
 </body>
 </html>

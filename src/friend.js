@@ -504,7 +504,7 @@ async function runBatchWithFallback(ids, batchFn, singleFn) {
 
 /**
  * 面板手动好友操作（单个好友）
- * opType: 'steal' | 'water' | 'weed' | 'bad'
+ * opType: 'steal' | 'water' | 'weed' | 'bug' | 'bad'
  */
 async function doFriendOperation(friendGid, opType) {
     const gid = toNum(friendGid);
@@ -550,6 +550,15 @@ async function doFriendOperation(friendGid, opType) {
             count = await runBatchWithFallback(status.needWeed, (ids) => helpWeed(gid, ids), (ids) => helpWeed(gid, ids));
             if (count > 0) recordOperation('helpWeed', count);
             return { ok: true, opType, count, message: `除草完成 ${count} 块` };
+        }
+
+        if (opType === 'bug') {
+            if (!status.needBug.length) return { ok: true, opType, count: 0, message: '没有可除虫土地' };
+            const precheck = await checkCanOperateRemote(gid, 10006);
+            if (!precheck.canOperate) return { ok: true, opType, count: 0, message: '今日除虫次数已用完' };
+            count = await runBatchWithFallback(status.needBug, (ids) => helpInsecticide(gid, ids), (ids) => helpInsecticide(gid, ids));
+            if (count > 0) recordOperation('helpBug', count);
+            return { ok: true, opType, count, message: `除虫完成 ${count} 块` };
         }
 
         if (opType === 'bad') {

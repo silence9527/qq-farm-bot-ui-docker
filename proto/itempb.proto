@@ -20,7 +20,8 @@ message SellRequest {
 }
 
 message SellReply {
-    repeated corepb.Item items = 1;  // 物品变化列表（实际返回）
+    repeated corepb.Item sell_items = 1;  // 出售的物品
+    repeated corepb.Item get_items = 2;   // 获得的物品（常见: 1001=金币, 1002=点券）
 }
 
 // ============ 使用物品 ============

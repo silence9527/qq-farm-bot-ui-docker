@@ -501,7 +501,14 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
             }
         }
         const boughtName = getPlantNameBySeedId(actualSeedId);
-        log('购买', `已购买 ${boughtName}种子 x${landsToPlant.length}, 花费 ${bestSeed.price * landsToPlant.length} 金币`);
+        log('购买', `已购买 ${boughtName}种子 x${landsToPlant.length}, 花费 ${bestSeed.price * landsToPlant.length} 金币`, {
+            module: 'farm',
+            event: 'seed_buy',
+            result: 'ok',
+            seedId: actualSeedId,
+            count: landsToPlant.length,
+            cost: bestSeed.price * landsToPlant.length,
+        });
     } catch (e) {
         logWarn('购买', e.message);
         return;
@@ -511,7 +518,13 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
     let plantedLands = [];
     try {
         const planted = await plantSeeds(actualSeedId, landsToPlant);
-        log('种植', `已在 ${planted} 块地种植 (${landsToPlant.join(',')})`);
+        log('种植', `已在 ${planted} 块地种植 (${landsToPlant.join(',')})`, {
+            module: 'farm',
+            event: 'plant_seed',
+            result: 'ok',
+            seedId: actualSeedId,
+            count: planted,
+        });
         if (planted > 0) {
             plantedLands = landsToPlant.slice(0, planted);
         }
@@ -527,7 +540,13 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
         if (fertilizerConfig === 'normal' || fertilizerConfig === 'both') {
             const fertilizedNormal = await fertilize(plantedLands, NORMAL_FERTILIZER_ID);
             if (fertilizedNormal > 0) {
-                log('施肥', `已为 ${fertilizedNormal}/${plantedLands.length} 块地施无机化肥`);
+                log('施肥', `已为 ${fertilizedNormal}/${plantedLands.length} 块地施无机化肥`, {
+                    module: 'farm',
+                    event: 'fertilize',
+                    result: 'ok',
+                    type: 'normal',
+                    count: fertilizedNormal,
+                });
                 recordOperation('fertilize', fertilizedNormal);
             }
         }
@@ -536,7 +555,13 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
         if (fertilizerConfig === 'organic' || fertilizerConfig === 'both') {
             const fertilizedOrganic = await fertilize(plantedLands, ORGANIC_FERTILIZER_ID);
             if (fertilizedOrganic > 0) {
-                log('施肥', `已为 ${fertilizedOrganic}/${plantedLands.length} 块地施有机化肥`);
+                log('施肥', `已为 ${fertilizedOrganic}/${plantedLands.length} 块地施有机化肥`, {
+                    module: 'farm',
+                    event: 'fertilize',
+                    result: 'ok',
+                    type: 'organic',
+                    count: fertilizedOrganic,
+                });
                 recordOperation('fertilize', fertilizedOrganic);
             }
         }
@@ -740,6 +765,11 @@ async function runFarmOperation(opType) {
                 actions.push(`收获${status.harvestable.length}`);
                 recordOperation('harvest', status.harvestable.length);
                 harvestedLandIds = [...status.harvestable];
+                networkEvents.emit('farmHarvested', {
+                    count: status.harvestable.length,
+                    landIds: [...status.harvestable],
+                    opType,
+                });
             } catch (e) { logWarn('收获', e.message); }
         }
     }

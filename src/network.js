@@ -29,6 +29,9 @@ const userState = {
 };
 
 function getUserState() { return userState; }
+function hasOwn(obj, key) {
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
 
 // ============ 消息编解码 ============
 function encodeMsg(serviceName, methodName, bodyBytes) {
@@ -197,17 +200,24 @@ function handleNotify(msg) {
                     
                     // 仅使用 ID=1101 作为经验值标准
                     if (id === 1101) {
-                        userState.exp = count;
+                        // 优先使用总量；若仅有 delta 也可累加
+                        if (count > 0) userState.exp = count;
+                        else if (delta !== 0) userState.exp = Math.max(0, Number(userState.exp || 0) + delta);
                         // 这里调用 updateStatusLevel 会触发 status.js -> worker.js -> stats.js 的更新流程
-                        updateStatusLevel(userState.level, count);
+                        updateStatusLevel(userState.level, userState.exp);
                         if (DEBUG_NOTIFY && delta !== 0) {
-                            console.log(`[DEBUG] 经验变化: +${delta} (Total: ${count})`);
+                            console.log(`[DEBUG] 经验变化: +${delta} (Total: ${userState.exp})`);
                         }
-                    } else if (id === 1) {
-                        userState.gold = count;
-                        updateStatusGold(count);
+                    } else if (id === 1 || id === 1001) {
+                        // 金币通知有时只有 delta 没有总量，避免把未提供总量误当 0 覆盖
+                        if (count > 0) {
+                            userState.gold = count;
+                        } else if (delta !== 0) {
+                            userState.gold = Math.max(0, Number(userState.gold || 0) + delta);
+                        }
+                        updateStatusGold(userState.gold);
                         if (delta !== 0) {
-                            log('物品', `金币 ${delta > 0 ? '+' : ''}${delta} (当前: ${count})`);
+                            log('物品', `金币 ${delta > 0 ? '+' : ''}${delta} (当前: ${userState.gold})`);
                         }
                     }
                 }
@@ -221,15 +231,29 @@ function handleNotify(msg) {
                 const notify = types.BasicNotify.decode(eventBody);
                 if (notify.basic) {
                     const oldLevel = userState.level;
-                    const oldExp = userState.exp || 0;
-                    userState.level = toNum(notify.basic.level) || userState.level;
-                    userState.gold = toNum(notify.basic.gold) || userState.gold;
-                    const exp = toNum(notify.basic.exp);
-                    if (exp > 0) {
-                        userState.exp = exp;
-                        updateStatusLevel(userState.level, exp);
+                    if (hasOwn(notify.basic, 'level')) {
+                        const nextLevel = toNum(notify.basic.level);
+                        if (Number.isFinite(nextLevel) && nextLevel > 0) userState.level = nextLevel;
                     }
-                    updateStatusGold(userState.gold);
+                    let shouldUpdateGoldView = false;
+                    if (hasOwn(notify.basic, 'gold')) {
+                        const nextGold = toNum(notify.basic.gold);
+                        if (Number.isFinite(nextGold) && nextGold >= 0) {
+                            userState.gold = nextGold;
+                            shouldUpdateGoldView = true;
+                        }
+                    }
+                    if (hasOwn(notify.basic, 'exp')) {
+                        const exp = toNum(notify.basic.exp);
+                        if (Number.isFinite(exp) && exp >= 0) {
+                            userState.exp = exp;
+                            updateStatusLevel(userState.level, exp);
+                        }
+                    }
+                    if (shouldUpdateGoldView) {
+                        // 仅在确实收到 gold 字段时刷新金币状态，避免缺省字段覆盖
+                        updateStatusGold(userState.gold);
+                    }
                     // 升级提示
                     if (userState.level !== oldLevel) {
                         log('系统', `升级! Lv${oldLevel} → Lv${userState.level}`);

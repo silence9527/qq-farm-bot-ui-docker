@@ -26,6 +26,50 @@ const logFilters = {
     isWarn: localStorage.getItem('logFilterIsWarn') || '',
 };
 
+const LOG_MODULE_LABELS = {
+    farm: '农场',
+    friend: '好友',
+    scheduler: '调度',
+    warehouse: '仓库',
+    task: '任务',
+    account: '账号',
+    system: '系统',
+};
+
+const LOG_EVENT_LABELS = {
+    farm_cycle: '农场巡查',
+    lands_notify: '土地推送',
+    remove_plant: '铲除枯死作物',
+    seed_pick: '选种',
+    seed_buy: '购买种子',
+    seed_buy_skip: '种子购买跳过',
+    plant_seed: '种植种子',
+    fertilize: '施加化肥',
+    friend_cycle: '好友巡查',
+    friend_scan: '好友扫描',
+    visit_friend: '访问好友',
+    enter_farm: '进入农场',
+    quiet_hours: '静默时段',
+    sell_success: '出售成功',
+    sell_done: '出售完成',
+    sell_gain_pending: '出售收益待同步',
+    sell_after_harvest: '收获后出售',
+    sell_skip_invalid: '出售跳过',
+    upgrade_land: '土地升级',
+    unlock_land: '土地解锁',
+    tick: '调度执行',
+};
+
+function shouldHideLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return false;
+    const tag = String(entry.tag || '');
+    const msg = String(entry.msg || '');
+    if (tag === '物品') return true; // 屏蔽金币+/-等物品变更噪声
+    if (msg.includes('获得物品')) return true;
+    if (/金币\s*[+-]/.test(msg)) return true;
+    return false;
+}
+
 function showExpChart(e) {
     e.preventDefault();
     const modal = document.getElementById('modal-chart');
@@ -257,6 +301,11 @@ function fmtRemainSec(sec) {
     if (h > 0) return `${h}小时${m}分`;
     if (m > 0) return `${m}分`;
     return `${n}秒`;
+}
+
+function toSafeNumber(value, fallback = 0) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
 }
 
 async function api(path, method = 'GET', body = null) {
@@ -551,12 +600,12 @@ async function pollStatus() {
     }
 
     // Session Gains & History
-    const expGain = (data.sessionExpGained || 0);
-    const goldGain = (data.sessionGoldGained || 0);
+    const expGain = toSafeNumber(data.sessionExpGained, 0);
+    const goldGain = toSafeNumber(data.sessionGoldGained, 0);
     
     // stat-exp 显示会话总增量
-    updateValueWithAnim('stat-exp', (expGain >= 0 ? '+' : '') + expGain);
-    updateValueWithAnim('stat-gold', (goldGain >= 0 ? '+' : '') + goldGain, 'value-changed-gold');
+    updateValueWithAnim('stat-exp', (expGain >= 0 ? '+' : '') + Math.floor(expGain));
+    updateValueWithAnim('stat-gold', (goldGain >= 0 ? '+' : '') + Math.floor(goldGain), 'value-changed-gold');
     
     // 记录历史数据用于图表 (每分钟记录一次)
     const now = new Date();
@@ -638,15 +687,19 @@ async function pollStatus() {
 async function pollLogs() {
     const list = await api(`/api/logs?${buildLogQuery()}`);
     const wrap = $('logs-list');
-    if (!list || !list.length) { wrap.innerHTML = '<div class="log-row">暂无日志</div>'; return; }
-    const renderKey = JSON.stringify(list.map(l => [l.time, l.tag, l.msg, !!l.isWarn, l.accountId, (l.meta && l.meta.event) || '']));
+    const normalized = (Array.isArray(list) ? list : []).filter((l) => !shouldHideLogEntry(l));
+    if (!normalized.length) { wrap.innerHTML = '<div class="log-row">暂无日志</div>'; return; }
+    const renderKey = JSON.stringify(normalized.map(l => [l.time, l.tag, l.msg, !!l.isWarn, l.accountId, (l.meta && l.meta.event) || '', (l.meta && l.meta.module) || '']));
     if (renderKey === lastLogsRenderKey) return;
     lastLogsRenderKey = renderKey;
-    wrap.innerHTML = list.slice().reverse().map(l => {
+    wrap.innerHTML = normalized.slice().reverse().map(l => {
         const name = l.accountName ? `【${l.accountName}】` : '';
         const timeStr = ((l.time || '').split(' ')[1] || (l.time || ''));
-        const mod = l.meta && l.meta.module ? `(${l.meta.module})` : '';
-        const ev = l.meta && l.meta.event ? `[${l.meta.event}]` : '';
+        const moduleKey = (l.meta && l.meta.module) ? String(l.meta.module) : '';
+        const eventKey = (l.meta && l.meta.event) ? String(l.meta.event) : '';
+        const mod = moduleKey ? `(${LOG_MODULE_LABELS[moduleKey] || moduleKey})` : '';
+        const eventLabel = LOG_EVENT_LABELS[eventKey] || '';
+        const ev = eventLabel ? `[${eventLabel}]` : '';
         return `<div class="log-row ${l.isWarn?'warn':''}">
             <span class="log-time">${escapeHtml(timeStr)}</span>
             <span class="log-tag">[${escapeHtml(l.tag || '系统')}]</span>
@@ -748,6 +801,7 @@ async function loadFriends() {
                     <button class="btn btn-sm" onclick="friendQuickOp(event, '${f.gid}', 'steal')">一键偷取</button>
                     <button class="btn btn-sm" onclick="friendQuickOp(event, '${f.gid}', 'water')">一键浇水</button>
                     <button class="btn btn-sm" onclick="friendQuickOp(event, '${f.gid}', 'weed')">一键除草</button>
+                    <button class="btn btn-sm" onclick="friendQuickOp(event, '${f.gid}', 'bug')">一键除虫</button>
                     <button class="btn btn-sm" onclick="friendQuickOp(event, '${f.gid}', 'bad')">一键捣乱</button>
                 </div>
                 <div id="friend-lands-${f.gid}" class="friend-lands" style="display:none">
@@ -818,7 +872,7 @@ window.friendQuickOp = async (event, gid, opType) => {
         event.stopPropagation();
     }
     if (!currentAccountId) return;
-    const opMap = { steal: '偷取', water: '浇水', weed: '除草', bad: '捣乱' };
+    const opMap = { steal: '偷取', water: '浇水', weed: '除草', bug: '除虫', bad: '捣乱' };
     const btn = event && event.currentTarget ? event.currentTarget : null;
     if (btn) btn.disabled = true;
     try {

@@ -15,7 +15,7 @@
   "preferredSeedId": 20002,
   "intervals": {
     "farm": 2,
-    "friend": 1800
+    "friend": 3
   },
   "friendQuietHours": {
     "enabled": true,

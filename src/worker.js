@@ -8,8 +8,8 @@ const { checkFarm, startFarmCheckLoop, stopFarmCheckLoop, refreshFarmCheckLoop, 
 const { checkFriends, startFriendCheckLoop, stopFriendCheckLoop, refreshFriendCheckLoop, getFriendsList, getFriendLandsDetail, doFriendOperation, getOperationLimits } = require('./friend');
 const { initTaskSystem, cleanupTaskSystem, claimTaskReward } = require('./task');
 const { initStatusBar, cleanupStatusBar, setStatusPlatform, statusData } = require('./status');
-const { getOperations, recordGoldExp, getStats } = require('./stats');
-const { startSellLoop, stopSellLoop, debugSellFruits } = require('./warehouse');
+const { getOperations, recordGoldExp, getStats, setInitialValues, resetSessionGains, recordOperation } = require('./stats');
+const { sellAllFruits, debugSellFruits } = require('./warehouse');
 const { processInviteCodes } = require('./invite');
 const { setLogHook, log } = require('./utils');
 const { setRecordGoldExpHook } = require('./status');
@@ -53,16 +53,18 @@ let unifiedSchedulerRunning = false;
 let unifiedTaskRunning = false;
 let nextFarmRunAt = 0;
 let nextFriendRunAt = 0;
-let farmIdleRounds = 0;
-let friendIdleRounds = 0;
 let lastStatusHash = '';
 let lastStatusSentAt = 0;
+let onSellGain = null;
+let onFarmHarvested = null;
+let harvestSellRunning = false;
 
 function resetUnifiedSchedule() {
-    nextFarmRunAt = Date.now() + 2000;
-    nextFriendRunAt = Date.now() + 5000;
-    farmIdleRounds = 0;
-    friendIdleRounds = 0;
+    const farmMs = Math.max(1000, Number(CONFIG.farmCheckInterval) || 2000);
+    const friendMs = Math.max(1000, Number(CONFIG.friendCheckInterval) || 10000);
+    const now = Date.now();
+    nextFarmRunAt = now + farmMs;
+    nextFriendRunAt = now + friendMs;
 }
 
 async function runUnifiedTick() {
@@ -74,24 +76,17 @@ async function runUnifiedTick() {
 
     unifiedTaskRunning = true;
     try {
-        const intervals = require('./store').getIntervals();
         const auto = getAutomation();
-        const farmMs = Math.max(1000, Math.max(1, intervals.farm || 2) * 1000);
-        const friendMs = Math.max(1000, Math.max(1, intervals.friend || 10) * 1000);
+        const farmMs = Math.max(1000, Number(CONFIG.farmCheckInterval) || 2000);
+        const friendMs = Math.max(1000, Number(CONFIG.friendCheckInterval) || 10000);
 
         if (dueFarm) {
-            const farmWorked = auto.farm ? !!(await checkFarm()) : false;
-            farmIdleRounds = farmWorked ? 0 : Math.min(4, farmIdleRounds + 1);
-            const farmFactor = farmWorked ? 1 : Math.pow(2, farmIdleRounds);
-            const nextFarmDelay = Math.min(60000, farmMs * farmFactor);
-            nextFarmRunAt = Date.now() + nextFarmDelay;
+            if (auto.farm) await checkFarm();
+            nextFarmRunAt = Date.now() + farmMs;
         }
         if (dueFriend) {
-            const friendWorked = auto.friend ? !!(await checkFriends()) : false;
-            friendIdleRounds = friendWorked ? 0 : Math.min(4, friendIdleRounds + 1);
-            const friendFactor = friendWorked ? 1 : Math.pow(2, friendIdleRounds);
-            const nextFriendDelay = Math.min(120000, friendMs * friendFactor);
-            nextFriendRunAt = Date.now() + nextFriendDelay;
+            if (auto.friend) await checkFriends();
+            nextFriendRunAt = Date.now() + friendMs;
         }
     } catch (e) {
         log('系统', `统一调度执行失败: ${e.message}`, { module: 'scheduler', event: 'tick', result: 'error' });
@@ -124,19 +119,21 @@ function applyRuntimeConfig(snapshot, syncNow = false) {
     const rev = Number((snapshot || {}).__revision || 0);
     if (rev > 0) appliedConfigRevision = rev;
 
-    const intervals = require('./store').getIntervals();
-    if (intervals.farm) CONFIG.farmCheckInterval = Math.max(1, intervals.farm) * 1000;
-    if (intervals.friend) CONFIG.friendCheckInterval = Math.max(1, intervals.friend) * 1000;
+    // 优先使用本次下发的间隔，避免 worker 内部 store 漂移导致回退默认值
+    const incomingIntervals = (snapshot && snapshot.intervals && typeof snapshot.intervals === 'object')
+        ? snapshot.intervals
+        : null;
+    if (incomingIntervals && incomingIntervals.farm !== undefined) {
+        CONFIG.farmCheckInterval = Math.max(1, parseInt(incomingIntervals.farm, 10) || 2) * 1000;
+    }
+    if (incomingIntervals && incomingIntervals.friend !== undefined) {
+        CONFIG.friendCheckInterval = Math.max(1, parseInt(incomingIntervals.friend, 10) || 10) * 1000;
+    }
 
     if (loginReady) {
         refreshFarmCheckLoop(200);
         refreshFriendCheckLoop(200);
         resetUnifiedSchedule();
-
-        stopSellLoop();
-        if (getAutomation().sell !== false) {
-            startSellLoop(60000);
-        }
     }
 
     if (syncNow) syncStatus();
@@ -183,17 +180,45 @@ async function startBot(config) {
 
     const onLoginSuccess = async () => {
         loginReady = true;
+        // 登录成功后，以当前金币/经验作为统计基线，并清空会话增量
+        const state = getUserState();
+        setInitialValues(Number(state.gold || 0), Number(state.exp || 0));
+        resetSessionGains();
+
+        if (onSellGain) {
+            networkEvents.off('sell', onSellGain);
+        }
+        onSellGain = (deltaGold) => {
+            const delta = Number(deltaGold || 0);
+            if (!Number.isFinite(delta) || delta <= 0) return;
+            recordOperation('sell', 1);
+        };
+        networkEvents.on('sell', onSellGain);
+
+        if (onFarmHarvested) {
+            networkEvents.off('farmHarvested', onFarmHarvested);
+        }
+        onFarmHarvested = async () => {
+            if (harvestSellRunning) return;
+            if (!getAutomation().sell) return;
+            harvestSellRunning = true;
+            try {
+                await sellAllFruits();
+            } catch (e) {
+                log('仓库', `收获后自动出售失败: ${e.message}`, { module: 'warehouse', event: 'sell_after_harvest', result: 'error' });
+            } finally {
+                harvestSellRunning = false;
+            }
+        };
+        networkEvents.on('farmHarvested', onFarmHarvested);
+
         // 登录成功后启动各模块
         await processInviteCodes();
         startFarmCheckLoop({ externalScheduler: true });
         startFriendCheckLoop({ externalScheduler: true });
         startUnifiedScheduler();
         initTaskSystem();
-        // 根据配置启动售卖循环
-        if (getAutomation().sell !== false) {
-            startSellLoop(60000);
-        }
-        
+
         // 立即发送一次状态
         syncStatus();
     };
@@ -211,10 +236,17 @@ async function stopBot() {
     loginReady = false;
     stopUnifiedScheduler();
     networkEvents.off('kickout', onKickout);
+    if (onSellGain) {
+        networkEvents.off('sell', onSellGain);
+        onSellGain = null;
+    }
+    if (onFarmHarvested) {
+        networkEvents.off('farmHarvested', onFarmHarvested);
+        onFarmHarvested = null;
+    }
     stopFarmCheckLoop();
     stopFriendCheckLoop();
     cleanupTaskSystem();
-    stopSellLoop();
     if (statusSyncTimer) {
         clearInterval(statusSyncTimer);
         statusSyncTimer = null;
@@ -325,11 +357,11 @@ function syncStatus() {
 
     const userState = getUserState();
     const ws = getWs();
-    const connected = ws && ws.readyState === 1;
+    const connected = !!(loginReady && ws && ws.readyState === 1);
     
     let expProgress = null;
-    const level = statusData.level || userState.level;
-    const exp = statusData.exp ?? userState.exp ?? 0;
+    const level = (userState.level ?? statusData.level ?? 0);
+    const exp = (userState.exp ?? statusData.exp ?? 0);
     
     if (level > 0 && exp >= 0) {
         expProgress = getLevelExpProgress(level, exp);

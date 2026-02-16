@@ -113,6 +113,7 @@ function buildDefaultStatus(accountId) {
 function filterLogs(list, filters = {}) {
     const f = filters || {};
     const keyword = String(f.keyword || '').trim().toLowerCase();
+    const keywordTerms = keyword ? keyword.split(/\s+/).filter(Boolean) : [];
     const tag = String(f.tag || '').trim();
     const moduleName = String(f.module || '').trim();
     const eventName = String(f.event || '').trim();
@@ -125,9 +126,11 @@ function filterLogs(list, filters = {}) {
             const expected = String(isWarn) === '1' || String(isWarn).toLowerCase() === 'true';
             if (!!l.isWarn !== expected) return false;
         }
-        if (keyword) {
+        if (keywordTerms.length > 0) {
             const text = String(l._searchText || `${l.msg || ''} ${l.tag || ''}`).toLowerCase();
-            if (!text.includes(keyword)) return false;
+            for (const term of keywordTerms) {
+                if (!text.includes(term)) return false;
+            }
         }
         return true;
     });
