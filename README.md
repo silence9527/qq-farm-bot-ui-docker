@@ -225,8 +225,9 @@ panel/js/init.js             # 前端初始化与事件绑定
 ## 特别感谢
 
 - 核心功能实现：[linguo2625469/qq-farm-bot](https://github.com/linguo2625469/qq-farm-bot)
+- 部分功能实现：[QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot)
 - 扫码登录功能实现：[lkeme/QRLib](https://github.com/lkeme/QRLib)
-- 下线提醒相关：[imaegoo/pushoo]/(https://github.com/imaegoo/pushoo) (对下线提醒内容有疑问可以看这个)
+- 下线提醒相关：[imaegoo/pushoo](https://github.com/imaegoo/pushoo) (对下线提醒内容有疑问可以看这个)
 
 ## 免责声明
 
