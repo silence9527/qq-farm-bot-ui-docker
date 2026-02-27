@@ -51,6 +51,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./core
+          file: ./core/Dockerfile
           push: true
           tags: matata22/qq-farm-bot-ui-docker:latest
