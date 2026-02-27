@@ -1,40 +1,83 @@
-name: Build and Push Docker Image
+name: Sync Upstream and Build Docker Image
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/5 * * * *" # GitHub Actions 最小 5 分钟
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-and-build-main
+  cancel-in-progress: true
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Add upstream repo
+      - name: Configure git identity
         run: |
-          git remote add upstream https://github.com/Penty-d/qq-farm-bot-ui.git
-          git fetch upstream
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Merge upstream changes
+      - name: Sync with upstream (or skip on push event)
+        id: sync
         run: |
-          git merge upstream/main --allow-unrelated-histories || true
+          set -e
 
-      - name: Push changes
-        run: |
-          git push origin main || true
+          # 如果是你自己 push 到 main，直接标记 changed=true，进入构建
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 添加/更新 upstream
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/Penty-d/qq-farm-bot-ui.git
+          else
+            git remote add upstream https://github.com/Penty-d/qq-farm-bot-ui.git
+          fi
+
+          git fetch upstream main
+
+          LOCAL_SHA=$(git rev-parse HEAD)
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+
+          echo "Local:    $LOCAL_SHA"
+          echo "Upstream: $UPSTREAM_SHA"
+
+          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ]; then
+            echo "No upstream changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 仅允许快进合并，避免自动生成冲突提交
+          git merge --ff-only upstream/main
+          git push origin HEAD:main
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
   build:
     needs: sync
+    if: needs.sync.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout latest main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -54,4 +97,5 @@ jobs:
           context: .
           file: core/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: matata22/qq-farm-bot-ui-docker:latest
